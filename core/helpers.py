@@ -30,6 +30,8 @@ def ensure_task_columns():
         for col, col_type in new_columns.items():
             if col not in existing:
                 conn.execute(text(f'ALTER TABLE task ADD COLUMN {col} {col_type}'))
+        if 'weight' not in {row[1] for row in conn.execute(text('PRAGMA table_info(project)'))}:
+            conn.execute(text('ALTER TABLE project ADD COLUMN weight FLOAT NOT NULL DEFAULT 1'))
         conn.commit()
 
 

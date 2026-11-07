@@ -1,0 +1,87 @@
+{% extends 'base.html' %}
+
+{% block title %}員工評分 - 專案管理系統{% endblock %}
+
+{% block content %}
+<div class="layout-container flex grow flex-col">
+    <div class="flex-1 overflow-auto p-6 w-full max-w-[1100px] mx-auto">
+        <!-- Year scope -->
+        <form method="GET" action="{{ url_for('scoring') }}"
+            class="mb-6 flex flex-wrap items-center gap-3 bg-surface border border-line rounded-lg p-4">
+            <span class="text-sm font-medium text-ink">評分年度</span>
+            <a href="{{ url_for('scoring', year=this_year) }}" {% if year == this_year %}aria-current="true"{% endif %}
+                class="rounded-lg border border-line px-3 py-1.5 text-sm font-medium transition-colors {% if year == this_year %}bg-primary text-white{% else %}bg-surface-muted text-ink-muted hover:text-ink{% endif %}">今年</a>
+            <input id="scoring-year" aria-label="評分年度" type="number" name="year" value="{{ year }}" min="2000" max="2100"
+                onchange="this.form.submit()" class="input w-[110px]">
+        </form>
+
+        <!-- Total score per employee -->
+        {% if overall %}
+        <div class="mb-6 grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {% for e in overall %}
+            <a href="{{ url_for('employee_case', person=e.name) }}"
+                class="bg-surface border border-line rounded-lg p-4 flex items-center gap-3 hover:bg-surface-muted transition-colors">
+                <img src="{{ avatar_src(e.name, e.avatar) }}" alt="" loading="lazy" class="hidden size-10 shrink-0 rounded-full bg-surface-muted object-cover sm:block">
+                <div class="min-w-0">
+                    <div class="truncate text-sm font-medium text-ink-muted">{{ e.display }}</div>
+                    <div class="whitespace-nowrap text-2xl font-bold text-ink"><span class="num-pop" style="--i:{{ loop.index0 }}">{{ '%g'|format(e.score) }}</span> <span class="text-base font-medium text-ink-muted">分</span></div>
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Project / employee / score -->
+        <div class="border border-line rounded-lg overflow-hidden bg-surface">
+            <div class="px-4 py-3 border-b border-line bg-surface-muted flex items-center gap-2">
+                <span class="material-symbols-outlined text-[18px] text-primary">workspace_premium</span>
+                <h3 class="text-sm font-bold text-ink">{{ year }} 年專案評分</h3>
+                <span class="rounded-full bg-primary/10 px-2 py-0.5 text-sm font-medium text-primary">{{ projects|length }} 個專案</span>
+            </div>
+            <div class="overflow-x-auto">
+                <table id="scoring-table" class="m-cards w-full min-w-[640px] text-left text-sm border-collapse">
+                    <thead>
+                        <tr class="bg-surface-muted border-b border-line text-ink-muted text-sm font-semibold">
+                            <th class="px-4 py-3 w-[30%]">專案</th>
+                            {% if session.get('db_admin_auth') %}<th class="px-4 py-3 w-[110px]">權重</th>{% endif %}
+                            <th class="px-4 py-3">員工評分</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-line">
+                        {% for p in projects %}
+                        <tr id="project-{{ p.id }}" class="align-top hover:bg-surface-muted transition-colors">
+                            <td data-label="專案" class="px-4 py-3">
+                                <div><a href="{{ url_for('project_detail', id=p.id) }}" class="font-semibold text-ink hover:text-primary hover:underline">{{ p.name }}</a>
+                                <div class="mt-1 text-sm text-ink-muted">總工時 {{ '%g'|format(p.total) }} 小時</div></div>
+                            </td>
+                            {% if session.get('db_admin_auth') %}
+                            <td data-label="權重" class="px-4 py-3">
+                                <form method="POST" action="{{ url_for('set_project_weight', id=p.id) }}">
+                                    <input type="hidden" name="year" value="{{ year }}">
+                                    <input type="number" name="weight" aria-label="{{ p.name }} 權重" value="{{ '%g'|format(p.weight) }}" min="0.01" max="1000" step="any" required
+                                        onchange="this.form.submit()" class="input w-[80px]">
+                                </form>
+                            </td>
+                            {% endif %}
+                            <td data-label="員工評分" class="px-4 py-3">
+                                <div class="flex flex-wrap justify-end gap-2 md:justify-start">
+                                    {% for e in p.employees %}
+                                    <a href="{{ url_for('employee_case', person=e.name, project_id=p.id) }}" class="score-chip inline-flex items-center gap-2 rounded-md border border-line bg-surface-muted px-2 py-1 transition-colors hover:border-primary">
+                                        <img src="{{ avatar_src(e.name, e.avatar) }}" alt="" loading="lazy" class="size-6 shrink-0 rounded-full bg-surface object-cover">
+                                        <span class="text-sm font-medium text-ink">{{ e.display }}</span>
+                                        <span class="font-bold text-primary">{{ '%g'|format(e.score) }}</span>
+                                    </a>
+                                    {% endfor %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="{{ 3 if session.get('db_admin_auth') else 2 }}" class="px-4 py-8 text-center text-ink-muted">{{ year }} 年沒有工時紀錄</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

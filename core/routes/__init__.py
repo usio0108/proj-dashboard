@@ -1,5 +1,6 @@
 def register_routes(app):
-    from . import main, projects, tasks, admin, manage
+    from . import main, projects, tasks, admin, manage, scoring
+    scoring.register(app)
     main.register(app)
     projects.register(app)
     tasks.register(app)

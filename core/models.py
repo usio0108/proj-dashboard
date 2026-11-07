@@ -31,6 +31,7 @@ class Project(db.Model):
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date, nullable=True)
     notes = db.Column(db.Text, nullable=True)
+    weight = db.Column(db.Float, nullable=False, default=1, server_default='1')
     tasks = db.relationship('Task', backref='project', lazy=True, cascade='all, delete-orphan')
 
 

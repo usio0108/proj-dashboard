@@ -16,6 +16,7 @@ core/
   routes/
     __init__.py       register_routes(app) — mounts all route modules
     main.py           dashboard, timeline, employee page, overtime stats
+    scoring.py        employee scoring page, per-project weight
     projects.py       project CRUD
     tasks.py          task (work-hours) CRUD
     admin.py          admin login, backup API, CSV export/import
@@ -48,7 +49,7 @@ docs/MAINTAINERS.md development, deployment and server migration instructions
 | `Representative` | sales representative (nullable resigned_date) |
 | `Personnel` | employee (avatar path, display name, nullable resigned_date). No upload -> DiceBear avatar (`avatar_url()` in `core/helpers.py`, template global `avatar_src`) |
 | `Category` | project category |
-| `Project` | project (dates, status, equipment, description) |
+| `Project` | project (dates, status, equipment, description, scoring `weight` in (0, 1000], default 1) |
 | `Task` | work-hours record, FK to Project; person, day/overtime/night hours (`total_hours` property) |
 
 - Deleting a `Project` cascades to its `Task`s.
@@ -77,6 +78,8 @@ Public (`core/routes/main.py`, `projects.py`, `tasks.py`):
 | `GET /project/<id>` | project detail page; task log has client-side keyword search (matches highlighted as `mark.kw-hit` on text nodes) and a 全部/年/月/日 period filter that prefix-matches each row's `data-date` (ISO string, no Date parsing); CSV export follows the filtered rows |
 | `GET /employee-case` | lands on the overview unless `?person=` or `?view=person` is given (person page); `?view=overview[&month=YYYY-MM]` = month calendar of every employee's records (grid and dots rendered server-side by `build_overview()` in `core/routes/main.py`, day popover is a `<dialog>` fed by inline JSON: compact employee-dot + project list, per-record details in collapsed `<details>`, no avatars). Person page renders only the first 20 task rows (`templates/_employee_task_rows.html`); 「載入更多」 fetches the next slice from `GET /employee-case/tasks?person=&offset=&limit=[&project_id=]` (JSON `{html,count,total,next_offset}`, date desc + id desc). Pie period is picked by the `#pie-period` select / ◀▶ on the pie card (group headers only expand/collapse). Stat cards, pie chart and group-header totals come from `_person_task_aggregates()` (full set, passed as `TASK_AGG`), not from loaded rows. |
 | `GET /overtime-stats` | overtime statistics |
+| `GET /scoring` | employee scores for `?year=` (by `Task.date`): score = hours × `Project.weight` |
+| `POST /scoring/weight/<id>` | admin-only, sets a project weight (> 0, at most 1000) |
 
 Admin, session-gated (`admin.py`, `manage.py`):
 
