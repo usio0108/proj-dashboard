@@ -49,3 +49,8 @@ class Task(db.Model):
     @property
     def total_hours(self):
         return (self.day_hours or 0) + (self.overtime_hours or 0) + (self.night_hours or 0)
+
+
+class Setting(db.Model):
+    key = db.Column(db.String(50), primary_key=True)
+    value = db.Column(db.String(100), nullable=False)

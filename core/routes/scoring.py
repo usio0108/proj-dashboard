@@ -3,9 +3,21 @@ from datetime import date
 
 from flask import flash, redirect, render_template, request, session, url_for
 from ..extensions import db
-from ..models import Personnel, Project, Task
+from ..models import Personnel, Project, Setting, Task
 
 MAX_WEIGHT = 1000
+
+
+def get_rates():
+    """Overtime and night multipliers from the Setting table; default 1 when unset or unreadable."""
+    vals = {r.key: r.value for r in Setting.query.filter(Setting.key.in_(('overtime_rate', 'night_rate')))}
+
+    def rate(key):
+        try:
+            return float(vals[key])
+        except (KeyError, ValueError):
+            return 1.0
+    return rate('overtime_rate'), rate('night_rate')
 
 
 def register(app):
@@ -41,30 +53,33 @@ def register(app):
         tasks = Task.query.filter(Task.date >= start, Task.date < end).all()
         weights = {p.id: p.weight for p in Project.query.all()}
 
+        ot_rate, night_rate = get_rates()
+
         people = {p.name: p for p in Personnel.query.all()}
+        # Roster: not resigned before this year, plus anyone with hours (even if resigned).
+        names = {n for n, p in people.items() if p.resigned_date is None or p.resigned_date >= start}
+        names |= {t.personnel for t in tasks}
 
         def row(name):
             person = people.get(name)
             return {'name': name, 'display': (person and person.display_name) or name,
                     'avatar': person.avatar_filename if person else None,
-                    'score': 0.0}
+                    'resigned': bool(person and person.resigned_date), 'score': 0.0}
 
-        per_project = defaultdict(dict)  # project_id -> employee -> row
-        hours = defaultdict(float)       # project_id -> raw hours (not weighted)
-        overall = {}
+        roster = sorted((row(n) for n in names), key=lambda r: (r['display'], r['name']))
+        by_name = {r['name']: r for r in roster}
+        score = defaultdict(float)  # (project_id, name) -> weighted score
+        hours = defaultdict(float)  # project_id -> raw hours (not weighted)
         for t in tasks:
-            w = weights.get(t.project_id, 1)
-            e = per_project[t.project_id].setdefault(t.personnel, row(t.personnel))
-            e['score'] += t.total_hours * w  # score == hours * project weight
+            s = ((t.day_hours or 0) + (t.overtime_hours or 0) * ot_rate
+                 + (t.night_hours or 0) * night_rate) * weights.get(t.project_id, 1)
+            score[t.project_id, t.personnel] += s
+            by_name[t.personnel]['score'] += s
             hours[t.project_id] += t.total_hours
-            total = overall.setdefault(t.personnel, row(t.personnel))
-            total['score'] += t.total_hours * w
 
-        by_score = lambda rows: sorted(rows, key=lambda r: (-r['score'], r['display']))
         projects = [
             {'id': p.id, 'name': p.name, 'total': hours[p.id], 'weight': p.weight,
-             'employees': by_score(per_project[p.id].values())}
-            for p in Project.query.order_by(Project.name).all() if p.id in per_project
+             'cells': [score.get((p.id, r['name']), 0.0) for r in roster]}
+            for p in Project.query.order_by(Project.name).all() if p.id in hours
         ]
-        return render_template('scoring.html', year=year, this_year=this_year, projects=projects,
-                               overall=by_score(overall.values()))
+        return render_template('scoring.html', year=year, this_year=this_year, projects=projects, roster=roster)

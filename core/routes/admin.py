@@ -10,7 +10,8 @@ from flask import render_template, request, redirect, url_for, flash, session, s
 from openpyxl import Workbook, load_workbook
 from sqlalchemy.orm import selectinload
 from ..extensions import db
-from ..models import Project, Task, Personnel, Representative, Category
+from ..models import Project, Task, Personnel, Representative, Category, Setting
+from .scoring import MAX_WEIGHT, get_rates
 from ..helpers import (backup_database, ensure_task_columns, ensure_people_columns, migrate_work_days_to_hours,
                        parse_resigned_date, BACKUP_KEEP)
 from ..activity_log import log_action
@@ -82,8 +83,29 @@ def register(app):
         reps = Representative.query.order_by(Representative.name).all()
         personnel_list = Personnel.query.order_by(Personnel.name).all()
         categories = Category.query.order_by(Category.name).all()
+        ot_rate, night_rate = get_rates()
         return render_template('manage_db.html', projects=projects, tasks=tasks,
-                               reps=reps, personnel=personnel_list, categories=categories)
+                               reps=reps, personnel=personnel_list, categories=categories,
+                               ot_rate=ot_rate, night_rate=night_rate)
+
+    @app.route('/manage-db/rates', methods=['POST'])
+    def set_rates():
+        guard = _require_auth()
+        if guard:
+            return guard
+        try:
+            rates = {k: float(request.form.get(k, '').strip()) for k in ('overtime_rate', 'night_rate')}
+            if not all(0 < v <= MAX_WEIGHT for v in rates.values()):  # also rejects nan and inf
+                raise ValueError
+        except ValueError:
+            flash(f'倍率必須是大於 0、不超過 {MAX_WEIGHT} 的數字', 'error')
+            return redirect(url_for('manage_db'))
+        for k, v in rates.items():
+            db.session.merge(Setting(key=k, value=repr(v)))
+        db.session.commit()
+        log_action(request.remote_addr, '調整加班/夜班倍率', f'overtime={rates["overtime_rate"]:g} night={rates["night_rate"]:g}')
+        flash('✅ 已更新加班/夜班倍率', 'success')
+        return redirect(url_for('manage_db'))
 
     # ── Backup / Restore ──────────────────────────────────────────────────────
 

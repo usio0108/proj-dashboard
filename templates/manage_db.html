@@ -86,6 +86,10 @@
                 <span class="bg-surface-muted text-ink-muted text-xs font-bold px-2 py-0.5 rounded-full">{{ categories |
                     length }}</span>
             </button>
+            <button id="db-btn-settings" onclick="switchDbTab('settings')" aria-selected="false"
+                class="flex items-center gap-2 pb-2 text-sm font-medium text-ink-muted hover:text-ink transition-colors">
+                <span class="material-symbols-outlined text-[18px]">settings</span> 設定
+            </button>
         </div>
     </div>
 
@@ -556,6 +560,19 @@
                 <div class="pager flex flex-wrap items-center justify-between gap-2 border-t border-line bg-surface px-4 py-3 text-sm text-ink-muted"></div>
             </div>
         </div>
+
+        <!-- Settings: scoring multipliers -->
+        <div id="db-view-settings" class="hidden">
+            <form action="{{ url_for('set_rates') }}#settings" method="POST"
+                class="flex flex-wrap items-center gap-3 border border-line rounded-lg bg-surface p-4">
+                <span class="text-sm font-medium text-ink">評分倍率</span>
+                <label class="flex items-center gap-2 text-sm text-ink-muted">加班倍率
+                    <input type="number" name="overtime_rate" value="{{ '%g'|format(ot_rate) }}" min="0.01" max="1000" step="any" required class="input w-[90px]"></label>
+                <label class="flex items-center gap-2 text-sm text-ink-muted">夜班倍率
+                    <input type="number" name="night_rate" value="{{ '%g'|format(night_rate) }}" min="0.01" max="1000" step="any" required class="input w-[90px]"></label>
+                <button type="submit" class="btn btn-secondary">儲存</button>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -716,20 +733,22 @@
 
     // ── Tab switching ───────────────────────────────────────────────
     function switchDbTab(tabId) {
-        const tabs = ['projects', 'tasks', 'reps', 'personnel', 'categories'];
+        const tabs = ['projects', 'tasks', 'reps', 'personnel', 'categories', 'settings'];
         tabs.forEach(t => {
             document.getElementById('db-view-' + t).classList.add('hidden');
             document.getElementById('db-btn-' + t).setAttribute('aria-selected', 'false');
             document.getElementById('db-btn-' + t).className = "flex items-center gap-2 pb-2 text-sm font-medium text-ink-muted hover:text-ink transition-colors";
-            const badge = document.getElementById('db-btn-' + t).querySelector('span:last-child');
+            const badge = document.getElementById('db-btn-' + t).querySelector('span.rounded-full');
             if (badge) badge.className = 'bg-surface-muted text-ink-muted text-xs font-bold px-2 py-0.5 rounded-full';
         });
         document.getElementById('db-view-' + tabId).classList.remove('hidden');
         document.getElementById('db-btn-' + tabId).setAttribute('aria-selected', 'true');
         document.getElementById('db-btn-' + tabId).className = "flex items-center gap-2 pb-2 text-sm font-bold text-primary transition-colors";
-        const activeBadge = document.getElementById('db-btn-' + tabId).querySelector('span:last-child');
+        const activeBadge = document.getElementById('db-btn-' + tabId).querySelector('span.rounded-full');
         if (activeBadge) activeBadge.className = 'bg-primary/10 text-primary text-xs font-bold px-2 py-0.5 rounded-full';
     }
+    // The rates form posts to ...#settings; the fragment survives the redirect back here.
+    if (location.hash === '#settings') switchDbTab('settings');
 
     // ── Projects: combined text search + status filter ───────────────
     function toggleStatusFilterPanel() {

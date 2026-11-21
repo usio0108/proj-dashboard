@@ -32,30 +32,85 @@ class ScoringPageTests(UiTestCase):
         p1, p2 = self.seed()
         html = self.get('/scoring?year=2025')
         table = re.search(r'<table id="scoring-table".*?</table>', html, re.S).group(0)
-        for header in ('專案', '員工評分'):
-            self.assertRegex(table, rf'<th[^>]*>{header}</th>')
-        self.assertEqual(len(re.findall(r'<tbody.*?</tbody>', table, re.S)), 1)
-        rows = re.findall(r'<tr id="project-\d+" class="align-top.*?</tr>', table, re.S)
+        self.assertRegex(table, r'<th[^>]*>專案</th>')
+        self.assertEqual(self.headers(table), ['專案', 'Bob', '小愛'])   # fixed order by display name
+        rows = self.rows(table)
         self.assertEqual(len(rows), 2)               # one row per project
-        self.assertNotIn('rowspan', table)
-        self.assertNotIn('日班', table)               # per-shift hours are gone
         self.assertIn(f'href="/project/{p1}"', rows[0])
         self.assertIn('總工時 15.5 小時', rows[0])     # P1: 8 + 2 + 1.5 + 4
         self.assertIn(f'href="/employee-case?person=Alice&amp;project_id={p1}"', rows[0])
-        self.assertIn(f'href="/employee-case?person=Bob&amp;project_id={p1}"', rows[0])
-        self.assertEqual(rows[0].count('小愛'), 1)    # merged column: name is not repeated
-        self.assertEqual(len(re.findall(r'<th[ >]', table)), 2)
-        chips = re.findall(r'score-chip.*?<span[^>]*>([^<]+)</span>\s*<span[^>]*>([\d.]+)</span>', rows[0], re.S)
-        self.assertEqual(chips, [('小愛', '11.5'), ('Bob', '4')])   # sorted by score; display name
+        self.assertEqual(self.cells(rows[0]), ['4', '11.5'])
         self.assertIn(f'href="/project/{p2}"', rows[1])
+        self.assertEqual(self.cells(rows[1]), ['–', '3'])   # Bob has nothing on P2
         self.assertNotIn('100', table)               # 2024 hours stay out of the 2025 scope
+
+    @staticmethod
+    def rows(table):
+        return re.findall(r'<tr id="project-\d+".*?</tr>', table, re.S)
+
+    @staticmethod
+    def cells(row):
+        return [re.sub(r'<[^>]+>', '', c).strip() for c in re.findall(r'<td class="px-4 py-3 text-right.*?</td>', row, re.S)]
+
+    @staticmethod
+    def headers(table):
+        return [re.sub(r'<[^>]+>', ' ', h).split()[0] for h in re.findall(r'<th.*?</th>', table, re.S)]
+
+    def overview_cards(self, html):
+        overview = html[:html.index('id="scoring-table"')]
+        return re.findall(r'text-ink-muted">([^<]+)(?: <span[^>]*>已離職</span>)?</div>\s*<div[^>]*><span[^>]*>([\d.]+)</span>', overview)
 
     def test_overview_totals_cross_projects(self):
         self.seed()
+        self.assertEqual(self.overview_cards(self.get('/scoring?year=2025')), [('Bob', '4'), ('小愛', '14.5')])   # 11.5 + 3
+
+    def set_rates(self, ot, night):
+        return self.admin_client().post('/manage-db/rates', data={'overtime_rate': ot, 'night_rate': night})
+
+    def test_rates_default_to_one_and_apply_to_score_not_hours(self):
+        p1, _ = self.seed()
+        self.assertEqual(self.overview_cards(self.get('/scoring?year=2025'))[1], ('小愛', '14.5'))
+        self.assertEqual(self.set_rates('2', '3').status_code, 302)
         html = self.get('/scoring?year=2025')
-        overview = html[:html.index('id="scoring-table"')]
-        self.assertRegex(overview, r'小愛</div>\s*<div[^>]*><span[^>]*>14\.5</span>')   # 11.5 + 3
-        self.assertRegex(overview, r'Bob</div>\s*<div[^>]*><span[^>]*>4</span>')
+        # Alice: P1 = 8 + 2*2 + 1.5*3 = 16.5, P2 = 3; Bob: 4 day hours
+        self.assertEqual(self.overview_cards(html), [('Bob', '4'), ('小愛', '19.5')])
+        table = re.search(r'<table id="scoring-table".*?</table>', html, re.S).group(0)
+        self.assertEqual(self.cells(self.rows(table)[0]), ['4', '16.5'])
+        self.assertIn('總工時 15.5 小時', table)       # raw hours stay unweighted
+
+    def test_rates_validated_and_admin_only(self):
+        from core.routes.scoring import get_rates
+        self.set_rates('2', '3')
+        admin = self.admin_client()
+        for bad in (('0', '1'), ('1', '-1'), ('abc', '1'), ('1', ''), ('nan', '1'), ('1', 'inf'), ('1000.5', '1')):
+            resp = admin.post('/manage-db/rates', data={'overtime_rate': bad[0], 'night_rate': bad[1]}, follow_redirects=True)
+            self.assertIn('倍率必須是大於 0', resp.get_data(as_text=True), bad)
+        self.app.test_client().post('/manage-db/rates', data={'overtime_rate': '9', 'night_rate': '9'})
+        with self.app.app_context():
+            self.assertEqual(get_rates(), (2.0, 3.0))   # all rejected; anonymous ignored
+        self.assertIn('name="overtime_rate"', admin.get('/manage-db').get_data(as_text=True))
+
+    def test_roster_includes_resigned_with_hours_excludes_resigned_before_year(self):
+        from core.models import Personnel, Project, Task
+        self.seed()
+        with self.app.app_context():
+            p = Project.query.filter_by(name='P2').one()
+            self.db.session.add_all([
+                Personnel(name='Gone', display_name='離職有工時', resigned_date=date(2025, 6, 1)),
+                Personnel(name='Old', display_name='早離職', resigned_date=date(2024, 12, 31)),
+                Personnel(name='Idle', display_name='在職無工時'),
+                Task(personnel='Gone', project_id=p.id, date=date(2025, 2, 1), day_hours=5, description='g'),
+            ])
+            self.db.session.commit()
+        html = self.get('/scoring?year=2025')
+        table = re.search(r'<table id="scoring-table".*?</table>', html, re.S).group(0)
+        self.assertEqual(self.headers(table), ['專案', 'Bob', '在職無工時', '小愛', '離職有工時'])
+        self.assertEqual(html.count('已離職'), 2)      # card + column header of Gone only
+        self.assertNotIn('早離職', html)
+        self.assertEqual(self.cells(self.rows(table)[1]), ['–', '–', '3', '5'])
+        self.assertEqual([c[0] for c in self.overview_cards(html)], ['Bob', '在職無工時', '小愛', '離職有工時'])
+        self.assertEqual(self.overview_cards(html)[1], ('在職無工時', '0'))
+        self.assertIn('早離職', self.get('/scoring?year=2024'))   # not yet resigned on Jan 1 2024
 
     def test_invalid_year_falls_back_to_current_year(self):
         self.seed()
@@ -93,12 +148,10 @@ class ScoringPageTests(UiTestCase):
         self.assertIn(f'#project-{p1}', resp.headers['Location'])
         html = self.get('/scoring?year=2025')    # anonymous viewer: weighted scores, no input
         table = re.search(r'<table id="scoring-table".*?</table>', html, re.S).group(0)
-        rows = re.findall(r'<tr id="project-\d+" class="align-top.*?</tr>', table, re.S)
+        rows = self.rows(table)
         self.assertIn('總工時 15.5 小時', rows[0])    # raw hours, unweighted
-        chips = re.findall(r'score-chip.*?<span[^>]*>([^<]+)</span>\s*<span[^>]*>([\d.]+)</span>', rows[0], re.S)
-        self.assertEqual(chips, [('小愛', '17.25'), ('Bob', '6')])
-        overview = html[:html.index('id="scoring-table"')]
-        self.assertRegex(overview, r'小愛</div>\s*<div[^>]*><span[^>]*>20\.25</span>')   # 17.25 + 3
+        self.assertEqual(self.cells(rows[0]), ['6', '17.25'])
+        self.assertEqual(self.overview_cards(html), [('Bob', '6'), ('小愛', '20.25')])   # 17.25 + 3
         self.assertNotIn('name="weight"', html)
         self.assertIn('name="weight"', self.admin_client().get('/scoring?year=2025').get_data(as_text=True))
 
